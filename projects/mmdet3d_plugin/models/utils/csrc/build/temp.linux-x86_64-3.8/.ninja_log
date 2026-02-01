@@ -1,0 +1,4 @@
+# ninja log v5
+0	25685	1754817191914106270	/high_perf_store4/evad-tech-vla/dcx/pointcloud/OPUS/models/csrc/build/temp.linux-x86_64-3.8/msmv_sampling/msmv_sampling.o	f6a89124a36e9759
+0	135643	1754817301870413640	/high_perf_store4/evad-tech-vla/dcx/pointcloud/OPUS/models/csrc/build/temp.linux-x86_64-3.8/msmv_sampling/msmv_sampling_backward.o	9993b652ee68e2
+0	137841	1754817304066747636	/high_perf_store4/evad-tech-vla/dcx/pointcloud/OPUS/models/csrc/build/temp.linux-x86_64-3.8/msmv_sampling/msmv_sampling_forward.o	e1f52e1f1f3e0781

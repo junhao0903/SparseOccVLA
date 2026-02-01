@@ -1,0 +1,4 @@
+# ninja log v5
+1	17861	1755614168381947639	/high_perf_store4/evad-tech-vla/dcx/pointcloud/omnidrive/projects/mmdet3d_plugin/models/utils/csrc/build/temp.linux-x86_64-3.9/msmv_sampling/msmv_sampling.o	16a207245c025198
+1	136968	1755614287473488551	/high_perf_store4/evad-tech-vla/dcx/pointcloud/omnidrive/projects/mmdet3d_plugin/models/utils/csrc/build/temp.linux-x86_64-3.9/msmv_sampling/msmv_sampling_backward.o	41940812381521ac
+1	139590	1755614290094627269	/high_perf_store4/evad-tech-vla/dcx/pointcloud/omnidrive/projects/mmdet3d_plugin/models/utils/csrc/build/temp.linux-x86_64-3.9/msmv_sampling/msmv_sampling_forward.o	9b49c5101ddd15a6

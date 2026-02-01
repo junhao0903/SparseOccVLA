@@ -1,0 +1,13 @@
+setuptools==59.5.0
+numpy==1.23.5
+networkx==2.8.8
+accelerate
+packaging
+wheel
+shapely==1.8.5.post1
+decord
+open3d
+flash-attn==2.3.6
+diffusers==0.30.0
+yapf==0.40.1
+peft==0.12.0
