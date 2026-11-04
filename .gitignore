@@ -26,3 +26,4 @@ output
 *.tmp
 *.log
 .dist_test/
+.idea
