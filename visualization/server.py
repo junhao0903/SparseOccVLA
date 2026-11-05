@@ -123,6 +123,7 @@ def _sample_payload(sample, idx):
         intrinsics = None
     try:
         extrinsics = _as_matrix(sample.get('extrinsics')
+                                or sample.get('ego2img')
                                 or sample.get('lidar2img'))
     except (OSError, ValueError):
         extrinsics = None

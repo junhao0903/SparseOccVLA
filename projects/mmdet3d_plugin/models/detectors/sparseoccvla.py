@@ -598,6 +598,39 @@ class SparseOccVLA(MVXTwoStageDetector):
         can_bus=data['can_bus'][0]
         outs = self.pts_bbox_head(x, img_metas,can_bus)
         results = [{}]
+        # Keep the camera information needed by the local result visualizer in
+        # the prediction record.  Collect3D stores these values in img_metas;
+        # the model output alone otherwise loses the link to the source image.
+        meta = img_metas[0]
+        filenames = meta.get('filename', meta.get('img_filename'))
+        if isinstance(filenames, (list, tuple)) and filenames:
+            results[0]['front_image'] = filenames[0]
+        elif isinstance(filenames, str):
+            results[0]['front_image'] = filenames
+        for key in ('intrinsics', 'extrinsics', 'lidar2img'):
+            value = meta.get(key)
+            if value is not None:
+                if torch.is_tensor(value):
+                    value = value.detach().cpu().numpy()
+                if isinstance(value, (list, tuple)):
+                    value = np.asarray(value)
+                if isinstance(value, np.ndarray) and value.ndim == 3:
+                    value = value[0]
+                if hasattr(value, 'tolist'):
+                    value = value.tolist()
+                results[0][key] = value
+        # Occupancy and trajectories use the ego frame, while nuScenes
+        # lidar2img is defined from the lidar frame. Compose the transform so
+        # the viewer can project ego-frame waypoints without a sensor offset.
+        if results[0].get('lidar2img') is not None and meta.get('ego2lidar') is not None:
+            lidar2img = np.asarray(results[0]['lidar2img'], dtype=np.float32)
+            ego2lidar = meta['ego2lidar']
+            if torch.is_tensor(ego2lidar):
+                ego2lidar = ego2lidar.detach().cpu().numpy()
+            ego2lidar = np.asarray(ego2lidar, dtype=np.float32)
+            if ego2lidar.ndim == 3:
+                ego2lidar = ego2lidar[0]
+            results[0]['ego2img'] = (lidar2img @ ego2lidar).tolist()
         mmcv.mkdir_or_exist(self.save_path)
         self.feature_distill=False
     

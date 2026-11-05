@@ -35,8 +35,8 @@ Overrides: `PYTHON_BIN` (interpreter, needs `numpy`), `SPARSEOCC_VIZ_HOST`,
 ## pkl schema (fields this viewer reads)
 
 The result file is the custom `SPARSEVLA-PKL-1` stream written by
-`tools/test.py --out`. Each sample record (`result`) is a dict. Fields already
-produced today:
+`tools/test.py --out`. Each sample record (`result`) is a dict. Fields produced
+by the current test path (when available):
 
 | key | type | meaning |
 | --- | --- | --- |
@@ -44,6 +44,10 @@ produced today:
 | `occ_forecasting` | uint8 `(4,200,200,16)` | `[current, fu-t2, fu-t4, fu-t6]` |
 | `generated_text` | list of `{Q, A, G}` | language output |
 | `token` | str | nuScenes sample token |
+| `traj_forecasting` | list of `[x, y]` | predicted ego-frame waypoints when the loaded model/config emits planning trajectories |
+| `front_image` | str | first camera image path from the test sample (CAM_FRONT in standard nuScenes camera ordering) |
+| `lidar2img` | 4x4 list | lidar-frame to front-camera pixel projection matrix, including test image transforms |
+| `ego2img` | 4x4 list | ego-frame to front-camera pixel projection matrix, used for projecting ego-frame waypoints |
 
 Optional fields you can add to each sample (the viewer degrades gracefully if
 they are absent):
