@@ -27,3 +27,4 @@ output
 *.log
 .dist_test/
 .idea
+AGENTS.md

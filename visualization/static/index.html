@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SparseOccVLA Visualizer</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./three/three.module.js",
+      "three/addons/": "./three/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="toolbar">
+    <span class="brand">SparseOccVLA</span>
+    <input id="pkl-path" type="text" placeholder="path to .pkl result file"
+           spellcheck="false" autocomplete="off">
+    <select id="pkl-list" title="discovered .pkl files"></select>
+    <button id="btn-load">Load</button>
+    <span class="sep"></span>
+    <button id="btn-prev" title="previous frame">&#9664; Prev</button>
+    <button id="btn-play" title="play / pause">&#9654; Play</button>
+    <button id="btn-next" title="next frame">Next &#9658;</button>
+    <span id="frame-indicator">no data</span>
+    <span id="status" class="status"></span>
+  </div>
+
+  <div id="main">
+    <section id="row-top">
+      <div id="text-panel">
+        <div class="panel-title">Language output</div>
+        <div id="text-body" class="placeholder">Load a pkl to see the language output.</div>
+      </div>
+      <div id="legend-panel">
+        <div class="panel-title">Occupancy classes</div>
+        <div id="legend-body" class="placeholder">Loading&#8230;</div>
+      </div>
+    </section>
+
+    <section id="row-middle">
+      <div class="panel" id="panel-current">
+        <div class="panel-title">Current occupancy</div>
+        <canvas id="occ-current"></canvas>
+      </div>
+      <div class="panel" id="panel-front">
+        <div class="panel-title">Front view</div>
+        <canvas id="front-view"></canvas>
+        <div id="front-placeholder" class="placeholder">No front-view image available.</div>
+      </div>
+    </section>
+
+    <section id="row-bottom">
+      <div class="panel" id="panel-fu1">
+        <div class="panel-title">Future t+1</div>
+        <canvas id="occ-fu1"></canvas>
+      </div>
+      <div class="panel" id="panel-fu2">
+        <div class="panel-title">Future t+2</div>
+        <canvas id="occ-fu2"></canvas>
+      </div>
+      <div class="panel" id="panel-fu3">
+        <div class="panel-title">Future t+3</div>
+        <canvas id="occ-fu3"></canvas>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
