@@ -1,0 +1,34 @@
+# Customize paths/topics for another recording. One input folder is one scene.
+input:
+  path: /media/adt/f2cc02a1-77e5-48d2-a036-931fa678e1131/data/yubei-0829/zd1_w_rosbag_out_000007.bag
+  recursive_bags: false
+output:
+  root: /media/adt/f2cc02a1-77e5-48d2-a036-931fa678e1131/data/sparseoccvla_converted
+source_format: rosbag
+target_format: nuscenes
+calibration_dir: /home/adt/adt-wukong2/opt/config/calibration/tx1
+sync_tolerance_sec: 0.1
+output_frequency_hz: 10.0
+keyframe_topic: camera34/compressed
+image_size: [1600, 900]  # width, height; SparseOccVLA test config
+cameras:
+  CAM_FRONT: {topic: camera34/compressed, calibration: mid_f.yml}
+  CAM_BACK: {topic: camera33/compressed, calibration: mid_b.yml}
+  CAM_FRONT_LEFT: {topic: camera31/compressed, calibration: mid_lf.yml}
+  CAM_BACK_LEFT: {topic: camera32/compressed, calibration: mid_lb.yml}
+  CAM_FRONT_RIGHT: {topic: camera30/compressed, calibration: mid_rf.yml}
+  CAM_BACK_RIGHT: {topic: camera29/compressed, calibration: mid_rb.yml}
+lidars:
+  - /pointcloud_lidar3
+  - /pointcloud_lidar1
+  - /pointcloud_lidar2
+localization_topic: /localization_result
+
+# Target camera matrices copied from local nuScenes mini calibration records.
+target_intrinsics:
+  CAM_FRONT: [[1266.417203047, 0.000000000, 816.267019745], [0.000000000, 1266.417203047, 491.507065793], [0.000000000, 0.000000000, 1.000000000]]
+  CAM_BACK: [[809.220990568, 0.000000000, 829.219600326], [0.000000000, 809.220990568, 481.778423845], [0.000000000, 0.000000000, 1.000000000]]
+  CAM_FRONT_LEFT: [[1272.597947060, 0.000000000, 826.615492735], [0.000000000, 1272.597947060, 479.751653864], [0.000000000, 0.000000000, 1.000000000]]
+  CAM_BACK_LEFT: [[1256.741481210, 0.000000000, 792.112574076], [0.000000000, 1256.741481210, 492.775746515], [0.000000000, 0.000000000, 1.000000000]]
+  CAM_FRONT_RIGHT: [[1260.847444600, 0.000000000, 807.968244526], [0.000000000, 1260.847444600, 495.334426874], [0.000000000, 0.000000000, 1.000000000]]
+  CAM_BACK_RIGHT: [[1259.513740585, 0.000000000, 807.252905384], [0.000000000, 1259.513740585, 501.195798849], [0.000000000, 0.000000000, 1.000000000]]
