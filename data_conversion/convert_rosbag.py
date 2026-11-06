@@ -31,7 +31,18 @@ def load_calibration(root, filename):
     path = os.path.join(root, 'camera', filename)
     K = opencv_matrix(path, 'K')
     D = opencv_matrix(path, 'D').reshape(-1)
-    return K, D
+    R = opencv_matrix(path, 'R')
+    T = opencv_matrix(path, 'T').reshape(3)
+    fs = cv2.FileStorage(path, cv2.FILE_STORAGE_READ)
+    sensor_link = fs.getNode('sensor_link').string()
+    fs.release()
+    return {
+        'K': K,
+        'D': D,
+        'sensor2ego_rotation_matrix': R,
+        'sensor2ego_translation': T,
+        'sensor_link': sensor_link,
+    }
 
 
 def read_cloud(msg):
@@ -112,7 +123,7 @@ def match_frame_sensors(timestamp, records, cfg):
         if match is None:
             missing.append(topic)
         else:
-            matched_lidars.append(match)
+            matched_lidars.append((topic, match))
 
     localization_records = records[cfg['localization_topic']]
     localization = nearest(
@@ -132,7 +143,8 @@ def rectify_camera_image(msg, source_calibration, target_intrinsic, image_size):
     if raw_image is None:
         return None
 
-    source_intrinsic, distortion = source_calibration
+    source_intrinsic = source_calibration['K']
+    distortion = source_calibration['D']
     output_intrinsic = target_intrinsic.copy()
     map_x, map_y = cv2.initUndistortRectifyMap(
         source_intrinsic,
@@ -151,7 +163,8 @@ def rectify_camera_image(msg, source_calibration, target_intrinsic, image_size):
     )
 
 
-def save_camera_data(scene_dir, sample_token, matched_cameras, cfg, calibrations, target_intrinsics):
+def save_camera_data(scene_dir, sample_token, matched_cameras, cfg, calibrations,
+                     target_intrinsics, ego_translation, ego_rotation):
     camera_infos = {}
     for camera_name, (image_timestamp, msg) in matched_cameras.items():
         image = rectify_camera_image(
@@ -169,27 +182,145 @@ def save_camera_data(scene_dir, sample_token, matched_cameras, cfg, calibrations
         if not cv2.imwrite(image_path, image, [int(cv2.IMWRITE_JPEG_QUALITY), 95]):
             raise IOError('Could not write image: ' + image_path)
 
+        calibration = calibrations[camera_name]
+        sensor2ego_rotation_matrix = calibration['sensor2ego_rotation_matrix']
+        sensor2ego_translation = calibration['sensor2ego_translation']
+        sensor2ego_rotation = quaternion_from_matrix(sensor2ego_rotation_matrix)
+        ego_rotation_matrix = quaternion_to_matrix(ego_rotation)
+        # The pipeline's compose_lidar2img expects this field as a rotation
+        # matrix (unlike sensor2ego_rotation, which follows nuScenes' wxyz).
+        sensor2global_rotation = ego_rotation_matrix @ sensor2ego_rotation_matrix
+        sensor2global_translation = (
+            ego_translation + ego_rotation_matrix @ sensor2ego_translation
+        )
         camera_infos[camera_name] = {
             'data_path': image_path,
             'timestamp': int(image_timestamp * 1e6),
             'cam_intrinsic': target_intrinsics[camera_name].copy(),
             'image_size': tuple(cfg['image_size']),
+            'sensor_link': calibration['sensor_link'],
+            'sensor2ego_rotation': sensor2ego_rotation,
+            'sensor2ego_translation': sensor2ego_translation.copy(),
+            'sensor2lidar_rotation': sensor2ego_rotation_matrix.copy(),
+            'sensor2lidar_translation': sensor2ego_translation.copy(),
+            'sensor2global_rotation': sensor2global_rotation,
+            'sensor2global_translation': sensor2global_translation,
         }
     return camera_infos
 
 
-def save_lidar_data(scene_dir, sample_token, lidar_matches):
-    points = np.concatenate([read_cloud(msg) for _, msg in lidar_matches], axis=0)
-    if points.shape[1] == 3:
-        points = np.concatenate([points, np.zeros((len(points), 1), np.float32)], axis=1)
+def save_lidar_data(scene_dir, sample_token, lidar_matches, cfg):
+    transformed_clouds = []
+    for topic, (timestamp, msg) in lidar_matches:
+        points = read_cloud(msg)
+        if points.shape[1] == 3:
+            points = np.concatenate([points, np.zeros((len(points), 1), np.float32)], axis=1)
+
+        calibration_path = os.path.join(
+            cfg['calibration_dir'], 'lidar', cfg['lidar_calibrations'][topic]
+        )
+        transform = opencv_matrix(calibration_path, 'RT')
+        points[:, :3] = points[:, :3] @ transform[:3, :3].T + transform[:3, 3]
+        transformed_clouds.append(points)
+
+    points = np.concatenate(transformed_clouds, axis=0)
 
     lidar_path = os.path.join(scene_dir, 'sweeps', 'LIDAR_TOP', sample_token + '.bin')
     points.astype(np.float32).tofile(lidar_path)
     return lidar_path
 
 
-def make_frame_info(scene_name, timestamp, sample_token, camera_infos, lidar_path, lidar_matches, localization, infos):
+def quaternion_from_rpy(roll, pitch, yaw):
+    """Return an (w, x, y, z) quaternion from ROS roll/pitch/yaw angles."""
+    cr, sr = np.cos(roll / 2.0), np.sin(roll / 2.0)
+    cp, sp = np.cos(pitch / 2.0), np.sin(pitch / 2.0)
+    cy, sy = np.cos(yaw / 2.0), np.sin(yaw / 2.0)
+    return np.asarray([
+        cr * cp * cy + sr * sp * sy,
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+    ], dtype=np.float64)
+
+
+def quaternion_from_matrix(rotation):
+    """Convert a 3x3 rotation matrix to an (w, x, y, z) quaternion."""
+    matrix = np.asarray(rotation, dtype=np.float64)
+    trace = np.trace(matrix)
+    if trace > 0.0:
+        scale = np.sqrt(trace + 1.0) * 2.0
+        quaternion = [
+            0.25 * scale,
+            (matrix[2, 1] - matrix[1, 2]) / scale,
+            (matrix[0, 2] - matrix[2, 0]) / scale,
+            (matrix[1, 0] - matrix[0, 1]) / scale,
+        ]
+    else:
+        axis = int(np.argmax(np.diag(matrix)))
+        if axis == 0:
+            scale = np.sqrt(1.0 + matrix[0, 0] - matrix[1, 1] - matrix[2, 2]) * 2.0
+            quaternion = [
+                (matrix[2, 1] - matrix[1, 2]) / scale, 0.25 * scale,
+                (matrix[0, 1] + matrix[1, 0]) / scale,
+                (matrix[0, 2] + matrix[2, 0]) / scale,
+            ]
+        elif axis == 1:
+            scale = np.sqrt(1.0 + matrix[1, 1] - matrix[0, 0] - matrix[2, 2]) * 2.0
+            quaternion = [
+                (matrix[0, 2] - matrix[2, 0]) / scale,
+                (matrix[0, 1] + matrix[1, 0]) / scale, 0.25 * scale,
+                (matrix[1, 2] + matrix[2, 1]) / scale,
+            ]
+        else:
+            scale = np.sqrt(1.0 + matrix[2, 2] - matrix[0, 0] - matrix[1, 1]) * 2.0
+            quaternion = [
+                (matrix[1, 0] - matrix[0, 1]) / scale,
+                (matrix[0, 2] + matrix[2, 0]) / scale,
+                (matrix[1, 2] + matrix[2, 1]) / scale, 0.25 * scale,
+            ]
+    quaternion = np.asarray(quaternion, dtype=np.float64)
+    return quaternion / np.linalg.norm(quaternion)
+
+
+def quaternion_to_matrix(quaternion):
+    w, x, y, z = np.asarray(quaternion, dtype=np.float64)
+    return np.asarray([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ], dtype=np.float64)
+
+
+def localization_to_pose(localization_msg):
+    """Map localization fields to the nuScenes-style pose and 13D can_bus."""
+    translation = np.asarray([
+        localization_msg.mercator_x,
+        localization_msg.mercator_y,
+        localization_msg.mercator_z,
+    ], dtype=np.float64)
+    rotation = quaternion_from_rpy(
+        localization_msg.roll,
+        localization_msg.pitch,
+        localization_msg.yaw,
+    )
+    acceleration = np.asarray([
+        localization_msg.accel_x,
+        localization_msg.accel_y,
+        localization_msg.accel_z,
+    ], dtype=np.float64)
+    angular_velocity = np.asarray([
+        localization_msg.angular_x,
+        localization_msg.angular_y,
+        localization_msg.angular_z,
+    ], dtype=np.float64)
+    can_bus = np.concatenate([translation, rotation, acceleration, angular_velocity])
+    return translation, rotation, can_bus
+
+
+def make_frame_info(scene_name, timestamp, sample_token, camera_infos, cam_sweeps,
+                    lidar_path, lidar_matches, localization, infos):
     localization_timestamp, localization_msg = localization
+    ego_translation, ego_rotation, can_bus = localization_to_pose(localization_msg)
     info = {
         'token': sample_token,
         'scene_token': scene_name,
@@ -199,8 +330,14 @@ def make_frame_info(scene_name, timestamp, sample_token, camera_infos, lidar_pat
         'img_timestamp': [camera_infos[name]['timestamp'] for name in camera_infos],
         'lidar_path': lidar_path,
         'cams': camera_infos,
+        # The fused point cloud messages declare base_link, so the reference
+        # LiDAR frame is represented as coincident with ego/base_link.
+        'lidar2ego_translation': np.zeros(3, dtype=np.float64),
+        'lidar2ego_rotation': np.asarray([1.0, 0.0, 0.0, 0.0]),
+        'ego2global_translation': ego_translation,
+        'ego2global_rotation': ego_rotation,
         'sweeps': [],
-        'cam_sweeps': [],
+        'cam_sweeps': cam_sweeps,
         'localization_timestamp': int(localization_timestamp * 1e6),
         'localization': {
             'longitude': localization_msg.longitude,
@@ -209,9 +346,13 @@ def make_frame_info(scene_name, timestamp, sample_token, camera_infos, lidar_pat
             'velocity': [localization_msg.vel_x, localization_msg.vel_y, localization_msg.vel_z],
             'rpy': [localization_msg.roll, localization_msg.pitch, localization_msg.yaw],
         },
-        'lidar_timestamps': [int(item[0] * 1e6) for item in lidar_matches],
-        'can_bus': np.zeros(13, dtype=np.float32),
+        'pose_translation_source': 'localization_result.mercator_xyz',
+        'pose_translation_is_constant_in_bag': False,
+        'lidar_timestamps': [int(item[1][0] * 1e6) for item in lidar_matches],
+        'can_bus': can_bus.astype(np.float32),
         'gt_planning_command': 0,
+        'gt_planning_command_source': 'placeholder_no_command_topic',
+        'gt_planning_command_valid': False,
         'prev': infos[-1]['token'] if infos else '',
         'next': '',
     }
@@ -247,32 +388,99 @@ def process_frames(scene_name, scene_dir, records, cfg):
             continue
 
         sample_token = '%06d' % len(infos)
+        localization_msg = localization[1]
+        ego_translation, ego_rotation, _ = localization_to_pose(localization_msg)
+
+        # Preserve the original camera-rate frames between adjacent 10 Hz
+        # keyframes so the test pipeline can sample real temporal images.
+        sweep_times = []
+        if last_candidate_timestamp is not None:
+            sweep_times = [
+                sweep_timestamp
+                for sweep_timestamp, _ in keyframes
+                if last_candidate_timestamp < sweep_timestamp < timestamp
+            ]
+        cam_sweeps = []
+        for sweep_index, sweep_timestamp in enumerate(reversed(sweep_times)):
+            sweep_cameras = {}
+            sweep_missing = False
+            for camera_name, camera_cfg in cfg['cameras'].items():
+                camera_records = records[camera_cfg['topic']]
+                camera_match = nearest(
+                    camera_records,
+                    [item[0] for item in camera_records],
+                    sweep_timestamp,
+                    float(cfg['sync_tolerance_sec']),
+                )
+                if camera_match is None:
+                    sweep_missing = True
+                    break
+                sweep_cameras[camera_name] = camera_match
+            sweep_localization_records = records[cfg['localization_topic']]
+            sweep_localization = nearest(
+                sweep_localization_records,
+                [item[0] for item in sweep_localization_records],
+                sweep_timestamp,
+                float(cfg['sync_tolerance_sec']),
+            )
+            if sweep_missing or sweep_localization is None:
+                continue
+            sweep_pose = localization_to_pose(sweep_localization[1])
+            sweep_token = '%s_sweep_%02d' % (sample_token, sweep_index)
+            sweep_info = save_camera_data(
+                scene_dir,
+                sweep_token,
+                sweep_cameras,
+                cfg,
+                calibrations,
+                target_intrinsics,
+                sweep_pose[0],
+                sweep_pose[1],
+            )
+            if sweep_info is not None:
+                cam_sweeps.append(sweep_info)
+
         camera_infos = save_camera_data(
-            scene_dir, sample_token, matched_cameras, cfg, calibrations, target_intrinsics
+            scene_dir, sample_token, matched_cameras, cfg, calibrations,
+            target_intrinsics, ego_translation, ego_rotation,
         )
         if camera_infos is None:
             dropped['invalid_image'] = dropped.get('invalid_image', 0) + 1
             continue
 
         last_candidate_timestamp = timestamp
-        lidar_path = save_lidar_data(scene_dir, sample_token, matched_lidars)
+        lidar_path = save_lidar_data(scene_dir, sample_token, matched_lidars, cfg)
         infos.append(make_frame_info(
             scene_name,
             timestamp,
             sample_token,
             camera_infos,
+            cam_sweeps,
             lidar_path,
             matched_lidars,
             localization,
             infos,
         ))
+    if infos:
+        translations = np.asarray([info['ego2global_translation'] for info in infos])
+        translation_is_constant = bool(np.allclose(translations, translations[0], atol=1e-6))
+        for info in infos:
+            info['pose_translation_is_constant_in_bag'] = translation_is_constant
     return infos, dropped
 
 
-def write_infos(scene_dir, infos):
+def write_infos(scene_dir, infos, cfg):
     info_path = os.path.join(scene_dir, 'nuscenes_infos_test.pkl')
+    data = {
+        'infos': infos,
+        'metadata': {
+            'version': cfg.get('target_version', 'v1.0-mini'),
+            'source_format': cfg.get('source_format', 'rosbag'),
+            'target_format': cfg.get('target_format', 'nuscenes'),
+        },
+    }
     with open(info_path, 'wb') as info_file:
-        pickle.dump(infos, info_file, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(data, info_file, protocol=pickle.HIGHEST_PROTOCOL)
     return info_path
 
 
@@ -290,7 +498,7 @@ def main():
     scene_name, scene_dir = create_scene_directory(cfg, bags)
     records = collect_topic_records(bags, cfg)
     infos, dropped = process_frames(scene_name, scene_dir, records, cfg)
-    info_path = write_infos(scene_dir, infos)
+    info_path = write_infos(scene_dir, infos, cfg)
 
     print('Wrote %d frames to %s; dropped=%s' % (len(infos), info_path, dropped))
     print('WARNING: localization pose/can_bus and LiDAR-to-camera extrinsics still need validation before model inference.')

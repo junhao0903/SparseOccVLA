@@ -11,17 +11,22 @@ sync_tolerance_sec: 0.1
 output_frequency_hz: 10.0
 keyframe_topic: camera34/compressed
 image_size: [1600, 900]  # width, height; SparseOccVLA test config
+# Keep the channel order used by SparseOccVLA's NuScenesDataset/pipeline.
 cameras:
   CAM_FRONT: {topic: camera34/compressed, calibration: mid_f.yml}
-  CAM_BACK: {topic: camera33/compressed, calibration: mid_b.yml}
-  CAM_FRONT_LEFT: {topic: camera31/compressed, calibration: mid_lf.yml}
-  CAM_BACK_LEFT: {topic: camera32/compressed, calibration: mid_lb.yml}
   CAM_FRONT_RIGHT: {topic: camera30/compressed, calibration: mid_rf.yml}
+  CAM_FRONT_LEFT: {topic: camera31/compressed, calibration: mid_lf.yml}
+  CAM_BACK: {topic: camera33/compressed, calibration: mid_b.yml}
+  CAM_BACK_LEFT: {topic: camera32/compressed, calibration: mid_lb.yml}
   CAM_BACK_RIGHT: {topic: camera29/compressed, calibration: mid_rb.yml}
 lidars:
   - /pointcloud_lidar3
   - /pointcloud_lidar1
   - /pointcloud_lidar2
+lidar_calibrations:
+  /pointcloud_lidar3: lidar_f.yml
+  /pointcloud_lidar1: lidar_r.yml
+  /pointcloud_lidar2: lidar_l.yml
 localization_topic: /localization_result
 
 # Target camera matrices copied from local nuScenes mini calibration records.
