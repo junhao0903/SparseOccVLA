@@ -66,6 +66,7 @@ class SparseOccVLA(MVXTwoStageDetector):
                  forecasting=False,
                  use_gen_token=False,
                  canbus_fu=False,
+                 language_template_token=None,
                  chat_config=None):
         super().__init__(pts_voxel_layer, pts_voxel_encoder, pts_middle_encoder,
                          pts_fusion_layer, img_backbone, pts_backbone, img_neck,
@@ -84,6 +85,7 @@ class SparseOccVLA(MVXTwoStageDetector):
         self.num_frames = self.pts_bbox_head.transformer.num_frames
         self.eval_occ = False
         self.use_gen_token = use_gen_token
+        self.language_template_token = language_template_token
         self.canbus_fu = canbus_fu
         self.diffusion_scheduler = DDIMScheduler(
             num_train_timesteps=1000,
@@ -662,13 +664,14 @@ class SparseOccVLA(MVXTwoStageDetector):
 
             generated_text = []
             token = img_metas[0]['sample_idx']  #InternVL
+            language_token = self.language_template_token or token
             conv_save = []
             question_list = []
             gt_answer_list = []
             conv_path = "./data/nuscenes/conv/val/"
-            conv_path = os.path.join(conv_path, token + ".json")
+            conv_path = os.path.join(conv_path, language_token + ".json")
             desc_path = "./data/nuscenes/desc/val/"
-            desc_path = os.path.join(desc_path, token + ".json")
+            desc_path = os.path.join(desc_path, language_token + ".json")
             with open(conv_path, 'r') as f:
                 conv_gt = json.load(f)
                 # add the questions to the question_list and the gt_answer to the gt_answer_list
