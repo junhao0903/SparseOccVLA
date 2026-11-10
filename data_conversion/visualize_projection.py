@@ -29,8 +29,19 @@ def project_lidar_to_camera(points_lidar, camera_info, max_depth):
     points_camera = points_camera[front_mask]
     depth = depth[front_mask]
 
-    pixels_h = points_camera @ intrinsic.T
-    uv = pixels_h[:, :2] / pixels_h[:, 2:3]
+    distortion = camera_info.get('cam_distortion')
+    if distortion is not None:
+        uv, _ = cv2.projectPoints(
+            points_camera.reshape(-1, 1, 3),
+            np.zeros(3, dtype=np.float64),
+            np.zeros(3, dtype=np.float64),
+            intrinsic,
+            np.asarray(distortion, dtype=np.float64),
+        )
+        uv = uv.reshape(-1, 2)
+    else:
+        pixels_h = points_camera @ intrinsic.T
+        uv = pixels_h[:, :2] / pixels_h[:, 2:3]
     return uv, depth, front_mask
 
 

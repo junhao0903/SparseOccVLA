@@ -35,6 +35,8 @@ def load_calibration(root, filename):
     T = opencv_matrix(path, 'T').reshape(3)
     fs = cv2.FileStorage(path, cv2.FILE_STORAGE_READ)
     sensor_link = fs.getNode('sensor_link').string()
+    image_width = int(fs.getNode('imgw').real())
+    image_height = int(fs.getNode('imgh').real())
     fs.release()
     return {
         'K': K,
@@ -42,6 +44,8 @@ def load_calibration(root, filename):
         'sensor2ego_rotation_matrix': R,
         'sensor2ego_translation': T,
         'sensor_link': sensor_link,
+        'image_width': image_width,
+        'image_height': image_height,
     }
 
 
@@ -143,7 +147,13 @@ def rectify_camera_image(msg, source_calibration, target_intrinsic, image_size):
     if raw_image is None:
         return None
 
-    source_intrinsic = source_calibration['K']
+    # Calibration files describe the camera at its calibrated resolution, but
+    # rosbag images may have been resized before they were recorded.
+    source_intrinsic = source_calibration['K'].copy()
+    scale_x = raw_image.shape[1] / float(source_calibration['image_width'])
+    scale_y = raw_image.shape[0] / float(source_calibration['image_height'])
+    source_intrinsic[0, :] *= scale_x
+    source_intrinsic[1, :] *= scale_y
     distortion = source_calibration['D']
     output_intrinsic = target_intrinsic.copy()
     map_x, map_y = cv2.initUndistortRectifyMap(
@@ -167,23 +177,45 @@ def save_camera_data(scene_dir, sample_token, matched_cameras, cfg, calibrations
                      target_intrinsics, ego_translation, ego_rotation):
     camera_infos = {}
     for camera_name, (image_timestamp, msg) in matched_cameras.items():
-        image = rectify_camera_image(
-            msg,
-            calibrations[camera_name],
-            target_intrinsics[camera_name],
-            cfg['image_size'],
-        )
+        calibration = calibrations[camera_name]
+        geometry_mode = cfg.get('image_geometry_mode', 'nuscenes')
+        raw_mode = geometry_mode in ('raw', 'raw_scaled')
+        image = cv2.imdecode(np.frombuffer(msg.data, dtype=np.uint8), cv2.IMREAD_COLOR)
         if image is None:
             return None
+        if raw_mode:
+            image_size = (image.shape[1], image.shape[0])
+            output_intrinsic = calibration['K'].copy()
+            if geometry_mode == 'raw_scaled':
+                scale_x = image.shape[1] / float(calibration['image_width'])
+                scale_y = image.shape[0] / float(calibration['image_height'])
+                output_intrinsic[0, :] *= scale_x
+                output_intrinsic[1, :] *= scale_y
+            distortion = calibration['D'].copy()
+        else:
+            image = rectify_camera_image(
+                msg,
+                calibration,
+                target_intrinsics[camera_name],
+                cfg['image_size'],
+            )
+            image_size = tuple(cfg['image_size'])
+            output_intrinsic = target_intrinsics[camera_name].copy()
+            distortion = None
 
         relative_path = os.path.join('samples', camera_name, sample_token + '.jpg')
         image_path = os.path.join(scene_dir, relative_path)
         os.makedirs(os.path.dirname(image_path), exist_ok=True)
-        if not cv2.imwrite(image_path, image, [int(cv2.IMWRITE_JPEG_QUALITY), 95]):
+        if raw_mode:
+            with open(image_path, 'wb') as image_file:
+                image_file.write(msg.data)
+        elif not cv2.imwrite(image_path, image, [int(cv2.IMWRITE_JPEG_QUALITY), 95]):
             raise IOError('Could not write image: ' + image_path)
 
-        calibration = calibrations[camera_name]
-        sensor2ego_rotation_matrix = calibration['sensor2ego_rotation_matrix']
+        # Camera YAML R maps vehicle coordinates into the camera frame
+        # (p_cam = R @ (p_vehicle - camera_position)). nuScenes stores the
+        # opposite direction in sensor2ego/sensor2lidar, so transpose R.
+        sensor2ego_rotation_matrix = calibration['sensor2ego_rotation_matrix'].T
         sensor2ego_translation = calibration['sensor2ego_translation']
         sensor2ego_rotation = quaternion_from_matrix(sensor2ego_rotation_matrix)
         ego_rotation_matrix = quaternion_to_matrix(ego_rotation)
@@ -196,8 +228,8 @@ def save_camera_data(scene_dir, sample_token, matched_cameras, cfg, calibrations
         camera_infos[camera_name] = {
             'data_path': image_path,
             'timestamp': int(image_timestamp * 1e6),
-            'cam_intrinsic': target_intrinsics[camera_name].copy(),
-            'image_size': tuple(cfg['image_size']),
+            'cam_intrinsic': output_intrinsic,
+            'image_size': image_size,
             'sensor_link': calibration['sensor_link'],
             'sensor2ego_rotation': sensor2ego_rotation,
             'sensor2ego_translation': sensor2ego_translation.copy(),
@@ -206,6 +238,8 @@ def save_camera_data(scene_dir, sample_token, matched_cameras, cfg, calibrations
             'sensor2global_rotation': sensor2global_rotation,
             'sensor2global_translation': sensor2global_translation,
         }
+        if distortion is not None:
+            camera_infos[camera_name]['cam_distortion'] = distortion
     return camera_infos
 
 
@@ -366,10 +400,15 @@ def process_frames(scene_name, scene_dir, records, cfg):
         name: load_calibration(cfg['calibration_dir'], camera['calibration'])
         for name, camera in cfg['cameras'].items()
     }
-    target_intrinsics = {
-        name: np.asarray(cfg['target_intrinsics'][name], dtype=np.float64)
-        for name in cfg['cameras']
-    }
+    if cfg.get('image_geometry_mode', 'nuscenes') in ('raw', 'raw_scaled'):
+        target_intrinsics = {
+            name: calibration['K'] for name, calibration in calibrations.items()
+        }
+    else:
+        target_intrinsics = {
+            name: np.asarray(cfg['target_intrinsics'][name], dtype=np.float64)
+            for name in cfg['cameras']
+        }
     keyframes = records[cfg['keyframe_topic']]
     target_frequency = float(cfg.get('output_frequency_hz', 10.0))
     infos = []
@@ -477,6 +516,7 @@ def write_infos(scene_dir, infos, cfg):
             'version': cfg.get('target_version', 'v1.0-mini'),
             'source_format': cfg.get('source_format', 'rosbag'),
             'target_format': cfg.get('target_format', 'nuscenes'),
+            'image_geometry_mode': cfg.get('image_geometry_mode', 'nuscenes'),
         },
     }
     with open(info_path, 'wb') as info_file:
@@ -487,8 +527,16 @@ def write_infos(scene_dir, infos, cfg):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default=os.path.join(os.path.dirname(__file__), 'config.yaml'))
+    parser.add_argument('--image-geometry', choices=['nuscenes', 'raw', 'raw_scaled'], default=None,
+                        help='Use nuScenes target geometry, exact raw K, or raw pixels with K scaled to native size')
+    parser.add_argument('--output-root', default=None,
+                        help='Override output root to keep conversion variants separate')
     args = parser.parse_args()
     cfg = load_config(args.config)
+    if args.image_geometry is not None:
+        cfg['image_geometry_mode'] = args.image_geometry
+    if args.output_root is not None:
+        cfg['output']['root'] = args.output_root
 
     input_path = cfg['input']['path']
     bags = bag_files(input_path, cfg['input'].get('recursive_bags', False))
@@ -501,7 +549,7 @@ def main():
     info_path = write_infos(scene_dir, infos, cfg)
 
     print('Wrote %d frames to %s; dropped=%s' % (len(infos), info_path, dropped))
-    print('WARNING: localization pose/can_bus and LiDAR-to-camera extrinsics still need validation before model inference.')
+    print('WARNING: localization pose/can_bus still need validation before model inference.')
 
 
 if __name__ == '__main__':
