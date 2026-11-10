@@ -182,6 +182,10 @@ def parse_args():
         '--out',
         help='incremental compressed VLA result file (.pkl; read with tools/visual.py)')
     parser.add_argument(
+        '--use-template',
+        action='store_true',
+        help='reuse conv/val/template.json and desc/val/template.json for every sample')
+    parser.add_argument(
         '--fuse-conv-bn',
         action='store_true',
         help='Whether to fuse conv and bn, this will slightly increase'
@@ -274,6 +278,8 @@ def main():
         raise ValueError('The output file must be a pkl file.')
 
     cfg = Config.fromfile(args.config)
+    if args.use_template:
+        cfg.model.language_template_token = 'template'
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
     # import modules from string list.
